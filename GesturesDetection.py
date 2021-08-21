@@ -1,79 +1,130 @@
-# TechVidvan hand Gesture Recognizer
-
-# import necessary packages
 
 import cv2
+import imutils
 import numpy as np
-import mediapipe as mp
-import tensorflow as tf
-from tensorflow.keras.models import load_model
-
-# initialize mediapipe
-mpHands = mp.solutions.hands
-hands = mpHands.Hands(max_num_hands=1, min_detection_confidence=0.7)
-mpDraw = mp.solutions.drawing_utils
-
-# Load the gesture recognizer model
-model = load_model('mp_hand_gesture')
-
-# Load class names23
-f = open('gesture.names', 'r')
-classNames = f.read().split('\n')
-f.close()
-print(classNames)
 
 
-# Initialize the webcam
-cap = cv2.VideoCapture(0)
+bg = None
 
-while True:
-    # Read each frame from the webcam
-    _, frame = cap.read()
 
-    x, y, c = frame.shape
+def run_avg(image, aWeight):
+    global bg
+    # inicializando el background
+    if bg is None:
+        bg = image.copy().astype("float")
+        return
 
-    # Flip the frame vertically
-    frame = cv2.flip(frame, 1)
-    framergb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+  
+    cv2.accumulateWeighted(image, bg, aWeight)
 
-    # Get hand landmark prediction
-    result = hands.process(framergb)
 
-    # print(result)
+def segment(image, threshold=25):
+    global bg
+ 
+    diff = cv2.absdiff(bg.astype("uint8"), image)
+
+ 
+    thresholded = cv2.threshold(diff,
+                                threshold,
+                                255,
+                                cv2.THRESH_BINARY)[1]
+
+  
+    (cnts, _) = cv2.findContours(thresholded.copy(),
+                                 cv2.RETR_EXTERNAL,
+                                 cv2.CHAIN_APPROX_SIMPLE)
+
+   
+    if len(cnts) == 0:
+        return
+    else:
+      
+        segmented = max(cnts, key=cv2.contourArea)
+        return (thresholded, segmented)
+
+
+def main():
     
-    className = ''
+    aWeight = 0.5
 
-    # post process the result
-    if result.multi_hand_landmarks:
-        landmarks = []
-        for handslms in result.multi_hand_landmarks:
-            for lm in handslms.landmark:
-                # print(id, lm)
-                lmx = int(lm.x * x)
-                lmy = int(lm.y * y)
+   
+    camera = cv2.VideoCapture(0)
 
-                landmarks.append([lmx, lmy])
+   
+    top, right, bottom, left = 10, 350, 225, 590
 
-            # Drawing landmarks on frames
-            mpDraw.draw_landmarks(frame, handslms, mpHands.HAND_CONNECTIONS)
+    num_frames = 0
+    image_num = 0
 
-            # Predict gesture
-            prediction = model.predict([landmarks])
-            # print(prediction)
-            classID = np.argmax(prediction)
-            className = classNames[classID]
+    start_recording = False
 
-    # show the prediction on the frame
-    cv2.putText(frame, className, (10, 50), cv2.FONT_HERSHEY_SIMPLEX, 
-                   1, (0,0,255), 2, cv2.LINE_AA)
+    
+    while(True):
+   
+        (grabbed, frame) = camera.read()
+        if (grabbed == True):
 
-    # Show the final output
-    cv2.imshow("Output", frame) 
+            frame = imutils.resize(frame, width=700)
 
-    if cv2.waitKey(1) == ord('q'):
-        break
+          
+            frame = cv2.flip(frame, 1)
 
-# release the webcam and destroy all active windows
-cap.release()
+         
+            clone = frame.copy()
 
+            (height, width) = frame.shape[:2]
+
+            roi = frame[top:bottom, right:left]
+
+            gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
+            gray = cv2.GaussianBlur(gray, (7, 7), 0)
+
+     
+            if num_frames < 30:
+                run_avg(gray, aWeight)
+                print(num_frames)
+            else:
+            
+                hand = segment(gray)
+
+              
+                if hand is not None:
+                  
+                    (thresholded, segmented) = hand
+
+                 
+                    cv2.drawContours(
+                        clone, [segmented + (right, top)], -1, (0, 0, 255))
+                    if start_recording:
+
+                       
+                        cv2.imwrite("Dataset/FistTest/fist_" +
+                                    str(image_num) + '.png', thresholded)
+                        image_num += 1
+                    cv2.imshow("Thesholded", thresholded)
+
+            cv2.rectangle(clone, (left, top), (right, bottom), (0, 255, 0), 2)
+
+            num_frames += 1
+
+            cv2.imshow("Video Feed", clone)
+
+          
+            keypress = cv2.waitKey(1) & 0xFF
+
+            if keypress == ord("q") or image_num > 100:
+                break
+
+            if keypress == ord("s"):
+                start_recording = True
+
+        else:
+            print("[Warning!] Error input, Please check your(camra Or video)")
+            break
+
+
+main()
+
+# free up memory
+camera.release()
 cv2.destroyAllWindows()
